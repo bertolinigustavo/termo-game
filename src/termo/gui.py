@@ -7,7 +7,7 @@ Para mudar a aparência do jogo (cores, tamanho, textos), comece pelas constante
 
 import pygame
 
-from termo.jogo import MAXIMO_TENTATIVAS, TAMANHO_PALAVRA, Jogo, Marca
+from termo.jogo import CURSOR_FIM_DA_LINHA, MAXIMO_TENTATIVAS, TAMANHO_PALAVRA, Jogo, Marca
 
 # --- Tamanhos (em pixels) ---
 LADO_CASA = 56  # lado de cada quadradinho da grade
@@ -20,10 +20,17 @@ ALTURA_TECLA = 46
 ESPACO_TECLA = 5
 FPS = 30  # quantos quadros por segundo o jogo desenha
 
+# --- Entrada ---
+# Só o botão esquerdo escolhe a casa: a roda do mouse também chega como MOUSEBUTTONDOWN
+# (botões 4 e 5), e sem este filtro rolar a roda em cima da grade mudaria a casa sozinho.
+BOTAO_ESQUERDO = 1
+
 # --- Cores (vermelho, verde, azul, de 0 a 255) ---
 FUNDO = (18, 18, 19)
 BORDA_VAZIA = (58, 58, 60)
 BORDA_DIGITANDO = (104, 106, 110)
+BORDA_SELECIONADA = (245, 245, 245)  # a casa onde a próxima letra vai entrar
+LARGURA_BORDA_SELECIONADA = 3  # mais grossa que as outras, para saltar aos olhos
 COR_CERTA = (59, 138, 122)
 COR_DESLOCADA = (200, 165, 90)
 COR_AUSENTE = (58, 51, 53)
@@ -33,11 +40,12 @@ TEXTO_APAGADO = (150, 152, 155)
 
 # --- Textos ---
 TITULO_JANELA = "Termo — descubra a palavra"
-DICA = "Digite uma palavra e aperte Enter · Esc sai"
+DICA = "Digite · clique ou setas escolhem a casa · Esc sai"
 DICA_FIM = "R joga de novo · Esc sai"
 
 # O teclado da tela é só um resumo colorido do que já se sabe: ele mostra as letras,
-# não recebe clique. Deixar clicável é uma das ideias do IDEIAS.md.
+# não recebe clique. Deixar clicável é uma das ideias do IDEIAS.md. (Quem recebe clique é a
+# GRADE, para escolher em que casa a letra entra — ver `tratar_clique`.)
 FILEIRAS_DO_TECLADO = ("QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM")
 
 # --- Geometria da janela (calculada a partir do que está acima) ---
@@ -94,12 +102,15 @@ class Tela:
             self.relogio.tick(FPS)
         pygame.quit()
 
-    # ----- Entrada (teclado) -----
+    # ----- Entrada (teclado e mouse) -----
 
     def tratar_evento(self, evento: pygame.event.Event) -> None:
         """Traduz um evento do pygame numa ação do jogo."""
         if evento.type == pygame.QUIT:
             self.rodando = False
+            return
+        if evento.type == pygame.MOUSEBUTTONDOWN:
+            self.tratar_clique(evento)
             return
         if evento.type != pygame.KEYDOWN:
             return
@@ -110,6 +121,12 @@ class Tela:
             self.jogo.enviar()
         elif evento.key == pygame.K_BACKSPACE:
             self.jogo.apagar()
+        elif evento.key == pygame.K_LEFT:
+            # As setas vêm antes do `else` de propósito: lá embaixo qualquer tecla vira letra,
+            # e em algumas plataformas o `unicode` da seta não é vazio.
+            self.jogo.mover_cursor(-1)
+        elif evento.key == pygame.K_RIGHT:
+            self.jogo.mover_cursor(1)
         elif evento.key == pygame.K_r and self.jogo.acabou:
             # R só reinicia depois do fim. Durante a partida, R é uma letra como outra
             # qualquer — senão ninguém conseguiria chutar uma palavra com R.
@@ -117,7 +134,28 @@ class Tela:
         else:
             self.jogo.digitar(evento.unicode)
 
+    def tratar_clique(self, evento: pygame.event.Event) -> None:
+        """Clicar num quadradinho da linha atual escolhe onde a próxima letra vai entrar."""
+        if evento.button != BOTAO_ESQUERDO:
+            return
+        coluna = self.coluna_clicada(evento.pos)
+        if coluna is not None:
+            self.jogo.selecionar(coluna)
+
     # ----- Geometria -----
+
+    def coluna_clicada(self, ponto: tuple[int, int]) -> int | None:
+        """Em qual casa da linha que está sendo digitada o clique caiu, ou `None` fora dela.
+
+        A busca para quando a partida acaba: aí a "linha atual" é a sétima, que não existe na
+        grade, e o retângulo calculado para ela cairia em cima da faixa do aviso.
+        """
+        if self.jogo.acabou:
+            return None
+        for coluna in range(TAMANHO_PALAVRA):
+            if self.retangulo_da_casa(self.jogo.linha_atual, coluna).collidepoint(ponto):
+                return coluna
+        return None
 
     def retangulo_da_casa(self, linha: int, coluna: int) -> pygame.Rect:
         """Onde fica, na janela, o quadradinho da linha e coluna pedidas (contando do 0)."""
@@ -150,6 +188,16 @@ class Tela:
             for coluna in range(TAMANHO_PALAVRA):
                 self.desenhar_casa(linha, coluna)
 
+    def casa_selecionada(self) -> int | None:
+        """Qual coluna está destacada agora, ou `None` quando não há nenhuma.
+
+        Não há destaque com a partida encerrada (a grade congela) nem com a linha cheia,
+        esperando o Enter — nesse instante a seleção está fora da linha.
+        """
+        if self.jogo.acabou or self.jogo.cursor == CURSOR_FIM_DA_LINHA:
+            return None
+        return self.jogo.cursor
+
     def desenhar_casa(self, linha: int, coluna: int) -> None:
         """Desenha um quadradinho: já avaliado (colorido), sendo digitado, ou ainda vazio."""
         area = self.retangulo_da_casa(linha, coluna)
@@ -161,11 +209,17 @@ class Tela:
             self.escrever(letra.letra, self.fonte_letra, TEXTO, area)
             return
 
-        sendo_digitada = linha == len(tentativas) and coluna < len(self.jogo.digitando)
-        cor_borda = BORDA_DIGITANDO if sendo_digitada else BORDA_VAZIA
-        pygame.draw.rect(self.janela, cor_borda, area, width=2, border_radius=4)
-        if sendo_digitada:
-            self.escrever(self.jogo.digitando[coluna], self.fonte_letra, TEXTO, area)
+        na_linha_atual = linha == self.jogo.linha_atual
+        letra = self.jogo.digitando[coluna] if na_linha_atual else ""
+        # A casa escolhida é destacada mesmo vazia: com a posição livre, ela é a única coisa
+        # na tela que responde "para onde vai a letra que eu digitar agora?".
+        if na_linha_atual and coluna == self.casa_selecionada():
+            cor_borda, grossura = BORDA_SELECIONADA, LARGURA_BORDA_SELECIONADA
+        else:
+            cor_borda, grossura = (BORDA_DIGITANDO if letra else BORDA_VAZIA), 2
+        pygame.draw.rect(self.janela, cor_borda, area, width=grossura, border_radius=4)
+        if letra:
+            self.escrever(letra, self.fonte_letra, TEXTO, area)
 
     def desenhar_aviso(self) -> None:
         """Mostra o recado do jogo ou, quando não há recado, a dica de como jogar."""

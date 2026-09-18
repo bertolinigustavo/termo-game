@@ -14,6 +14,16 @@ from termo.palavras import canonica, sem_acento, sortear_palavra
 TAMANHO_PALAVRA = 5
 MAXIMO_TENTATIVAS = 6
 
+CASA_VAZIA = ""
+"""O que fica numa casa da linha atual enquanto ninguém digitou nela."""
+
+CURSOR_FIM_DA_LINHA = TAMANHO_PALAVRA
+"""Cursor "depois da última casa": a linha está cheia e nenhuma casa está selecionada.
+
+É o mesmo que acontece num campo de texto quando o traço piscando vai parar depois da
+última letra: não há mais onde escrever, só resta apagar ou mandar.
+"""
+
 # Textos que a tela mostra. Ficam aqui, e não na `gui.py`, porque quem sabe que o chute está
 # incompleto ou que a partida terminou é o jogo — a tela só desenha o que ele disser.
 AVISO_FALTAM_LETRAS = "Faltam letras"
@@ -104,7 +114,8 @@ class Jogo:
         """
         self.secreta = ""
         self.tentativas: list[list[Letra]] = []
-        self.digitando = ""
+        self.digitando: list[str] = [CASA_VAZIA] * TAMANHO_PALAVRA
+        self.cursor = 0
         self.situacao = Situacao.JOGANDO
         self.aviso = ""
         self._comecar(secreta)
@@ -120,6 +131,15 @@ class Jogo:
     def tentativas_restantes(self) -> int:
         """Quantas tentativas ainda cabem."""
         return MAXIMO_TENTATIVAS - len(self.tentativas)
+
+    @property
+    def linha_atual(self) -> int:
+        """Qual linha da grade está sendo digitada agora (contando do 0).
+
+        Fica aqui, e não na tela, porque "a linha atual é a de número igual à quantidade de
+        tentativas já feitas" é regra do jogo, não geometria.
+        """
+        return len(self.tentativas)
 
     def letras_usadas(self) -> dict[str, Marca]:
         """A melhor marca já obtida por cada letra, para colorir o teclado da tela.
@@ -140,37 +160,73 @@ class Jogo:
     # ----- O que a pessoa faz -----
 
     def digitar(self, tecla: str) -> None:
-        """Acrescenta uma letra ao chute atual. Ignora tecla que não é letra e chute já cheio."""
-        if self.acabou or len(self.digitando) >= TAMANHO_PALAVRA:
+        """Escreve a letra na casa selecionada e passa a seleção para a próxima casa vazia.
+
+        A letra TROCA a que estiver na casa: é isso que permite corrigir o meio da palavra
+        sem apagar o que veio depois. Tecla que não é letra e linha cheia são ignoradas.
+        """
+        if self.acabou or self.cursor == CURSOR_FIM_DA_LINHA:
             return
         letra = sem_acento(tecla)
         if len(letra) != 1 or not letra.isalpha():
             return
-        self.digitando += letra
+        self.digitando[self.cursor] = letra
+        self.cursor = self._proxima_casa_vazia(self.cursor + 1)
         self.aviso = ""
 
     def apagar(self) -> None:
-        """Apaga a última letra digitada."""
+        """Apaga a letra da casa selecionada; se ela já estiver vazia, apaga a de trás.
+
+        É o que faz o Backspace continuar parecendo o de sempre: depois de digitar as cinco
+        letras, apertar Backspace seguidamente desfaz uma letra por vez, da direita para a
+        esquerda. E, com uma casa escolhida a dedo, ele limpa só aquela casa.
+        """
         if self.acabou:
             return
-        self.digitando = self.digitando[:-1]
+        if self.cursor == CURSOR_FIM_DA_LINHA:
+            self.cursor = TAMANHO_PALAVRA - 1
+        elif self.digitando[self.cursor] == CASA_VAZIA and self.cursor > 0:
+            self.cursor -= 1
+        self.digitando[self.cursor] = CASA_VAZIA
         self.aviso = ""
+
+    def mover_cursor(self, passo: int) -> None:
+        """Anda com a casa selecionada: `-1` para a esquerda, `+1` para a direita.
+
+        Nas pontas da linha a seleção para, não dá a volta: a grade tem começo e fim à vista,
+        e um cursor que salta do fim para o começo parece defeito. Recebe `-1`/`+1` em vez da
+        tecla do pygame porque este módulo não conhece pygame.
+        """
+        if self.acabou:
+            return
+        self.cursor = max(0, min(TAMANHO_PALAVRA - 1, self.cursor + passo))
+
+    def selecionar(self, posicao: int) -> None:
+        """Escolhe em qual casa da linha atual a próxima letra vai entrar — é o clique do mouse.
+
+        Posição fora da linha é ignorada em silêncio: quem chama é a tela, que pergunta a
+        partir de um clique que pode ter caído em qualquer canto da janela. E um número
+        negativo, em Python, escolheria a casa do fim sem reclamar.
+        """
+        if self.acabou or not 0 <= posicao < TAMANHO_PALAVRA:
+            return
+        self.cursor = posicao
 
     def enviar(self) -> bool:
         """Manda o chute atual. Devolve se ele foi aceito.
 
-        Chute incompleto não é aceito e NÃO gasta tentativa: a pessoa só apertou Enter cedo
+        Chute com casa vazia não é aceito e NÃO gasta tentativa: a pessoa só apertou Enter cedo
         demais, e perder uma das seis chances por isso seria punição sem motivo.
         """
         if self.acabou:
             return False
-        if len(self.digitando) < TAMANHO_PALAVRA:
+        if CASA_VAZIA in self.digitando:
             self.aviso = AVISO_FALTAM_LETRAS
             return False
 
-        tentativa = avaliar(self.digitando, self.secreta)
+        tentativa = avaliar("".join(self.digitando), self.secreta)
         self.tentativas.append(tentativa)
-        self.digitando = ""
+        self._limpar_linha()
 
         if all(letra.marca is Marca.CERTA for letra in tentativa):
             self.situacao = Situacao.VITORIA
@@ -188,6 +244,25 @@ class Jogo:
 
     # ----- Detalhe interno -----
 
+    def _proxima_casa_vazia(self, a_partir_de: int) -> int:
+        """A primeira casa vazia a partir da posição dada, dando a volta na linha.
+
+        Dar a volta é o que faz a seleção achar o buraco que ficou para trás: com `C_SA_`, ao
+        preencher a última casa a seleção precisa voltar para a casa 1 — senão o jogo diria
+        "faltam letras" sem mostrar onde falta. Devolve `CURSOR_FIM_DA_LINHA` quando não
+        sobrou nenhuma casa vazia.
+        """
+        for passo in range(TAMANHO_PALAVRA):
+            posicao = (a_partir_de + passo) % TAMANHO_PALAVRA
+            if self.digitando[posicao] == CASA_VAZIA:
+                return posicao
+        return CURSOR_FIM_DA_LINHA
+
+    def _limpar_linha(self) -> None:
+        """Deixa a linha que está sendo digitada em branco, com a primeira casa selecionada."""
+        self.digitando = [CASA_VAZIA] * TAMANHO_PALAVRA
+        self.cursor = 0
+
     def _comecar(self, secreta: str | None) -> None:
         """Zera o estado e define a palavra secreta desta partida."""
         # `canonica` cola cada acento na sua letra antes de contar: sem isso, uma palavra
@@ -199,6 +274,6 @@ class Jogo:
             )
         self.secreta = palavra
         self.tentativas = []
-        self.digitando = ""
+        self._limpar_linha()
         self.situacao = Situacao.JOGANDO
         self.aviso = ""

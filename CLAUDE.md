@@ -229,13 +229,16 @@ exceto o `__main__.py`.
 | ----------------------- | ------------------------------------------------------------------------ |
 | `secreta`               | a palavra da partida, com acento                                         |
 | `tentativas`            | lista de chutes já enviados; cada um é uma lista de `Letra`              |
-| `digitando`             | o chute que está sendo montado agora                                     |
+| `digitando`             | as cinco casas da linha atual, em lista, com `""` nas que estão vazias   |
+| `cursor`                | em qual casa a próxima letra entra (`CURSOR_FIM_DA_LINHA` = linha cheia) |
+| `linha_atual`           | qual linha da grade está sendo digitada agora                           |
 | `situacao`              | `JOGANDO`, `VITORIA` ou `DERROTA`                                        |
 | `aviso`                 | o recado para a tela mostrar                                             |
 | `acabou`                | atalho para "a partida terminou"                                         |
 | `tentativas_restantes`  | quantas chances sobraram                                                 |
 | `letras_usadas()`       | a melhor marca de cada letra, para colorir o teclado                     |
 | `digitar` / `apagar` / `enviar` / `reiniciar` | o que a pessoa faz                                 |
+| `mover_cursor` / `selecionar` | escolher a casa: `-1`/`+1` (setas) ou o número da casa (clique)    |
 
 `avaliar(chute, secreta)` é função livre: dá para chamar sem criar partida, e é onde mora a regra das
 cores. Cada `Letra` tem `letra` (o que aparece na tela) e `marca` (`CERTA`, `DESLOCADA`, `AUSENTE`).
@@ -261,7 +264,8 @@ cores. Cada `Letra` tem `letra` (o que aparece na tela) e `marca` (`CERTA`, `DES
 | Recusar palavra que não existe                      | `Jogo.enviar` + uma lista de palavras aceitas em `palavras.py` + testes                     |
 | Guardar estatísticas ou recorde                     | módulo puro novo (`estatisticas.py`, salvando JSON) + testes; a `Tela` só mostra            |
 | Modo de jogo novo (dueto, palavra do dia)           | módulo próprio + interruptor na `Tela`. Não infle `jogo.py` nem `gui.py`                    |
-| Deixar o teclado da tela clicável                   | `gui.py`: guardar o retângulo de cada tecla e tratar `MOUSEBUTTONDOWN`                      |
+| Deixar o teclado da tela clicável                   | `gui.py`: guardar o retângulo de cada tecla e tratar `MOUSEBUTTONDOWN` (a grade já trata: veja `tratar_clique`) |
+| Mudar como se escolhe a casa do chute               | `cursor`, `mover_cursor` e `selecionar` em `jogo.py`; `coluna_clicada` e `casa_selecionada` em `gui.py` |
 | Animação ao virar os quadradinhos                   | `gui.py`, usando `pygame.time.get_ticks()` — nunca `time.sleep`                             |
 
 ## Convenções de código

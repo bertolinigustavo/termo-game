@@ -18,6 +18,19 @@ Modelo:
 
 ---
 
+## 2026-09-18 — A linha atual tem cinco casas e uma casa selecionada
+
+- **O que:** `Jogo.digitando` deixou de ser um texto que cresce no fim e virou uma lista de cinco
+  casas, com `""` nas vazias, mais um `cursor` que diz em qual delas a próxima letra entra. A casa se
+  escolhe clicando na grade ou com as setas ←/→, e depois de cada letra a seleção anda para a próxima
+  casa vazia (dando a volta na linha, para achar buraco que ficou para trás).
+- **Por quê:** antes, corrigir a segunda letra de `CASAL` exigia apagar `ASAL` inteiro. Guardar
+  texto puro tornava impossível representar um buraco no meio. Foi descartada a alternativa de usar
+  espaço na casa vazia: `avaliar("CAS A", ...)` tem cinco caracteres, passaria na validação e
+  pintaria um quadradinho com um espaço dentro — bug invisível na tela e no diff.
+- **Protegido por:** `tests/test_jogo.py::test_chute_com_buraco_no_meio_nao_e_aceito` e
+  `tests/test_gui_smoke.py::test_clique_numa_casa_escolhe_onde_a_letra_vai_entrar`
+
 ## 2026-09-17 — A palavra é guardada com cada acento colado na sua letra (forma NFC)
 
 - **O que:** `palavras.canonica()` normaliza toda palavra que entra, ao carregar o arquivo e ao
@@ -42,6 +55,8 @@ Modelo:
   usa-se o teclado de verdade.
 - **Por quê:** o valor do teclado na tela é lembrar quais letras já saíram — isso ele entrega sem
   clique nenhum. Deixar clicável é uma feature legítima, e está no `IDEIAS.md` como exercício.
+  Atenção: desde 2026-09-18 a **grade** recebe clique (para escolher a casa) — o que continua sem
+  clique é o teclado desenhado embaixo dela.
 - **Protegido por:** sem teste — a ausência de clique não quebra nada; o que há é o teste de que o
   teclado desenha com a cor certa.
 
