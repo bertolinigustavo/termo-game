@@ -14,6 +14,7 @@ from termo import jogo as modulo_jogo
 from termo import palavras as modulo_palavras
 from termo.jogo import (
     AVISO_FALTAM_LETRAS,
+    CURSOR_FIM_DA_LINHA,
     MAXIMO_TENTATIVAS,
     TAMANHO_PALAVRA,
     Jogo,
@@ -35,6 +36,17 @@ def marcas(chute: str, secreta: str) -> list[Marca]:
 def exibicao(chute: str, secreta: str) -> str:
     """Atalho: só o texto que apareceria na tela depois de avaliar o chute."""
     return "".join(letra.letra for letra in avaliar(chute, secreta))
+
+
+def chute_visivel(jogo: Jogo) -> str:
+    """Atalho: a linha que está sendo digitada como texto, com `_` onde a casa está vazia."""
+    return "".join(letra or "_" for letra in jogo.digitando)
+
+
+def digitar_tudo(jogo: Jogo, teclas: str) -> None:
+    """Atalho: digita as teclas uma a uma, como a pessoa faria."""
+    for tecla in teclas:
+        jogo.digitar(tecla)
 
 
 def modulos_importados_por(modulo) -> set[str]:
@@ -157,9 +169,8 @@ def test_letra_amarela_nao_revela_o_acento():
 def test_digitar_monta_o_chute_letra_por_letra():
     """Digitar acrescenta ao chute atual — é o gesto principal do jogo."""
     jogo = Jogo("TERMO")
-    for tecla in "CASA":
-        jogo.digitar(tecla)
-    assert jogo.digitando == "CASA"
+    digitar_tudo(jogo, "CASA")
+    assert jogo.digitando == ["C", "A", "S", "A", ""]
 
 
 def test_digitar_aceita_letra_acentuada_do_teclado():
@@ -167,32 +178,145 @@ def test_digitar_aceita_letra_acentuada_do_teclado():
     jogo = Jogo("TERMO")
     jogo.digitar("ç")
     jogo.digitar("á")
-    assert jogo.digitando == "CA"
+    assert chute_visivel(jogo) == "CA___"
 
 
 def test_digitar_ignora_tecla_que_nao_e_letra():
-    """Número, espaço e pontuação não entram no chute — senão a grade mostraria lixo."""
+    """Número, espaço e pontuação não entram no chute — senão a grade mostraria lixo.
+
+    A casa selecionada também não anda: tecla recusada não pode mover a seleção, ou a
+    próxima letra cairia num lugar que a pessoa não escolheu.
+    """
     jogo = Jogo("TERMO")
-    for tecla in "1 -%":
-        jogo.digitar(tecla)
-    assert jogo.digitando == ""
+    digitar_tudo(jogo, "1 -%")
+    assert chute_visivel(jogo) == "_____"
+    assert jogo.cursor == 0
 
 
 def test_nao_da_para_digitar_a_sexta_letra():
-    """O chute para na quinta letra: a palavra tem cinco, e a grade também."""
+    """O chute para na quinta letra: a palavra tem cinco, e a grade também.
+
+    Por quê: com a linha cheia não sobra casa vazia, e a seleção sai da linha. Se ela
+    ficasse na última casa, encostar numa tecla a mais trocaria a quinta letra sem a pessoa
+    perceber — e ela mandaria, gastando uma tentativa, uma palavra que não quis chutar.
+    """
     jogo = Jogo("TERMO")
-    for tecla in "CARROS":
-        jogo.digitar(tecla)
-    assert jogo.digitando == "CARRO"
+    digitar_tudo(jogo, "CARROS")
+    assert chute_visivel(jogo) == "CARRO"
+    assert jogo.cursor == CURSOR_FIM_DA_LINHA
+
+
+def test_digitar_anda_para_a_proxima_casa_vazia():
+    """Escrita uma letra, a seleção pula sozinha para a próxima casa ainda vazia.
+
+    Por quê: é o que faz digitar as cinco letras seguidas continuar funcionando como sempre,
+    agora que dá para escolher a casa. Sem isso, a pessoa teria de clicar a cada letra.
+    """
+    jogo = Jogo("TERMO")
+    jogo.digitar("C")
+    assert jogo.cursor == 1
+
+
+def test_digitar_numa_casa_ja_ocupada_troca_a_letra():
+    """Escolher uma casa que já tem letra e digitar substitui a letra que estava lá.
+
+    Por quê: é o ponto inteiro desta feature — trocar o começo da palavra sem ter de apagar
+    as quatro letras que vieram depois dele.
+    """
+    jogo = Jogo("TERMO")
+    digitar_tudo(jogo, "CASAL")
+    jogo.selecionar(0)
+    jogo.digitar("M")
+    assert chute_visivel(jogo) == "MASAL"
+
+
+def test_cursor_volta_para_a_casa_vazia_que_ficou_para_tras():
+    """Com um buraco no meio, preencher a última casa leva a seleção de volta ao buraco.
+
+    Por quê: quem deixou um buraco quer preenchê-lo. Se a seleção parasse no fim da linha, a
+    pessoa apertaria Enter e ouviria "faltam letras" sem o jogo mostrar onde falta.
+    """
+    jogo = Jogo("TERMO")
+    digitar_tudo(jogo, "CASAL")
+    jogo.selecionar(1)
+    jogo.apagar()
+    jogo.selecionar(4)
+    jogo.digitar("R")
+    assert chute_visivel(jogo) == "C_SAR"
+    assert jogo.cursor == 1
+
+
+def test_seta_escolhe_a_casa_do_lado():
+    """As setas andam com a casa selecionada, uma de cada vez.
+
+    Por quê: é a alternativa ao mouse. Sem ela, quem joga só de teclado não alcança a feature.
+    """
+    jogo = Jogo("TERMO")
+    jogo.mover_cursor(1)
+    jogo.mover_cursor(1)
+    jogo.digitar("A")
+    assert chute_visivel(jogo) == "__A__"
+
+
+def test_setas_param_nas_pontas_da_linha():
+    """Na primeira casa a seta da esquerda não faz nada, e na última a da direita também.
+
+    Por quê: a grade tem começo e fim à vista. Uma seleção que salta do fim para o começo
+    parece defeito, e faz a pessoa apagar a letra errada sem entender por quê.
+    """
+    jogo = Jogo("TERMO")
+    jogo.mover_cursor(-1)
+    assert jogo.cursor == 0
+    for _ in range(TAMANHO_PALAVRA + 2):
+        jogo.mover_cursor(1)
+    assert jogo.cursor == TAMANHO_PALAVRA - 1
+
+
+def test_selecionar_casa_que_nao_existe_e_ignorado():
+    """Pedir uma casa fora das cinco não muda a seleção nem estoura.
+
+    Por quê: quem chama é a tela, a partir de um clique que pode ter caído em qualquer canto
+    da janela. E um número negativo, em Python, escolheria a casa do fim em silêncio.
+    """
+    jogo = Jogo("TERMO")
+    jogo.selecionar(-1)
+    jogo.selecionar(TAMANHO_PALAVRA)
+    assert jogo.cursor == 0
 
 
 def test_apagar_remove_a_ultima_letra():
     """Backspace desfaz a última letra — é como a pessoa corrige um erro de digitação."""
     jogo = Jogo("TERMO")
-    for tecla in "CASA":
-        jogo.digitar(tecla)
+    digitar_tudo(jogo, "CASA")
     jogo.apagar()
-    assert jogo.digitando == "CAS"
+    assert chute_visivel(jogo) == "CAS__"
+
+
+def test_apagar_limpa_a_casa_selecionada():
+    """Backspace com uma casa escolhida apaga a letra daquela casa, e só ela.
+
+    Por quê: sem isso, corrigir o meio da palavra ainda exigiria apagar tudo o que veio
+    depois — que é justamente o incômodo que esta feature resolve.
+    """
+    jogo = Jogo("TERMO")
+    digitar_tudo(jogo, "CASAL")
+    jogo.selecionar(2)
+    jogo.apagar()
+    assert chute_visivel(jogo) == "CA_AL"
+    assert jogo.cursor == 2
+
+
+def test_apagar_em_casa_vazia_apaga_a_letra_de_tras():
+    """Com a casa selecionada já vazia, Backspace desfaz a letra anterior, como sempre fez.
+
+    Por quê: é assim que a pessoa apaga um chute inteiro no tapa, letra por letra. Se ele só
+    limpasse a casa vazia, não faria nada e pareceria quebrado.
+    """
+    jogo = Jogo("TERMO")
+    digitar_tudo(jogo, "CAS")
+    jogo.apagar()
+    jogo.apagar()
+    assert chute_visivel(jogo) == "C____"
 
 
 def test_chute_incompleto_nao_gasta_tentativa():
@@ -206,17 +330,44 @@ def test_chute_incompleto_nao_gasta_tentativa():
     assert jogo.enviar() is False
     assert jogo.tentativas == []
     assert jogo.aviso == AVISO_FALTAM_LETRAS
-    assert jogo.digitando == "A"
+    assert chute_visivel(jogo) == "A____"
+
+
+def test_chute_com_buraco_no_meio_nao_e_aceito():
+    """Enter com uma casa vazia no meio avisa e também não gasta tentativa.
+
+    Por quê: agora a linha sempre tem cinco casas, então contar letras não basta — a
+    pergunta certa passou a ser se sobrou buraco. Sem esta checagem, a casa vazia viraria
+    uma letra fantasma na avaliação e a grade mostraria um quadradinho colorido sem letra.
+    """
+    jogo = Jogo("TERMO")
+    digitar_tudo(jogo, "CASAL")
+    jogo.selecionar(2)
+    jogo.apagar()
+    assert jogo.enviar() is False
+    assert jogo.tentativas == []
+    assert jogo.aviso == AVISO_FALTAM_LETRAS
 
 
 def test_enviar_guarda_a_tentativa_e_limpa_o_que_estava_digitado():
     """Depois de enviar, a linha vira histórico e a próxima começa vazia."""
     jogo = Jogo("TERMO")
-    for tecla in "CASAL":
-        jogo.digitar(tecla)
+    digitar_tudo(jogo, "CASAL")
     assert jogo.enviar() is True
     assert len(jogo.tentativas) == 1
-    assert jogo.digitando == ""
+    assert chute_visivel(jogo) == "_____"
+
+
+def test_enviar_devolve_a_selecao_para_a_primeira_casa():
+    """Mandado o chute, a linha nova começa com a primeira casa selecionada.
+
+    Por quê: assim a pessoa continua digitando a palavra seguinte sem tocar no mouse.
+    """
+    jogo = Jogo("TERMO")
+    digitar_tudo(jogo, "CASAL")
+    jogo.selecionar(3)
+    jogo.enviar()
+    assert jogo.cursor == 0
 
 
 # ----- Fim de partida -----
@@ -256,9 +407,24 @@ def test_partida_acabada_ignora_o_teclado():
 
     jogo.digitar("A")
     jogo.apagar()
-    assert jogo.digitando == ""
+    assert chute_visivel(jogo) == "_____"
     assert jogo.enviar() is False
     assert len(jogo.tentativas) == 1
+
+
+def test_partida_acabada_ignora_o_mouse_e_as_setas():
+    """Depois do fim, clicar numa casa e apertar as setas não mexem na seleção.
+
+    Por quê: a grade congela ao acabar a partida. Uma casa que ainda responde ao clique faz
+    a pessoa achar que dá para continuar chutando.
+    """
+    jogo = Jogo("TERMO")
+    digitar_tudo(jogo, "TERMO")
+    jogo.enviar()
+
+    jogo.selecionar(3)
+    jogo.mover_cursor(1)
+    assert jogo.cursor == 0
 
 
 def test_tentativas_restantes_diminui_a_cada_chute():
@@ -279,8 +445,16 @@ def test_reiniciar_limpa_a_grade():
     jogo.enviar()
     jogo.reiniciar()
     assert jogo.tentativas == []
-    assert jogo.digitando == ""
+    assert chute_visivel(jogo) == "_____"
     assert jogo.situacao is Situacao.JOGANDO
+
+
+def test_reiniciar_devolve_a_selecao_para_a_primeira_casa():
+    """Partida nova começa com a primeira casa selecionada, como a primeira de todas."""
+    jogo = Jogo("TERMO")
+    jogo.selecionar(4)
+    jogo.reiniciar()
+    assert jogo.cursor == 0
 
 
 def test_palavra_secreta_de_tamanho_errado_e_recusada():
